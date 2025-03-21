@@ -246,7 +246,7 @@ export interface DomainDANE {
 	Records?: TLSARecord[] | null
 	TLSABaseDomain: Domain
 	Error: string
-	VerifiedRecord: TLSARecord
+	VerifiedRecord?: TLSARecord | null
 }
 
 export interface TLSARecord {
@@ -420,7 +420,7 @@ export const types: TypenameMap = {
 	"DomainMXHost": {"Name":"DomainMXHost","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Host","Docs":"","Typewords":["IPDomain"]},{"Name":"MTASTSError","Docs":"","Typewords":["string"]},{"Name":"IP","Docs":"","Typewords":["DomainIP"]},{"Name":"DANE","Docs":"","Typewords":["DomainDANE"]},{"Name":"Dial","Docs":"","Typewords":["DomainDial"]},{"Name":"SMTP","Docs":"","Typewords":["DomainSMTP"]}]},
 	"IPDomain": {"Name":"IPDomain","Docs":"","Fields":[{"Name":"IP","Docs":"","Typewords":["IP"]},{"Name":"Domain","Docs":"","Typewords":["Domain"]}]},
 	"DomainIP": {"Name":"DomainIP","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Authentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedAuthentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedHost","Docs":"","Typewords":["Domain"]},{"Name":"IPs","Docs":"","Typewords":["[]","IP"]},{"Name":"DualStack","Docs":"","Typewords":["bool"]},{"Name":"Error","Docs":"","Typewords":["string"]}]},
-	"DomainDANE": {"Name":"DomainDANE","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Required","Docs":"","Typewords":["bool"]},{"Name":"Records","Docs":"","Typewords":["[]","TLSARecord"]},{"Name":"TLSABaseDomain","Docs":"","Typewords":["Domain"]},{"Name":"Error","Docs":"","Typewords":["string"]},{"Name":"VerifiedRecord","Docs":"","Typewords":["TLSARecord"]}]},
+	"DomainDANE": {"Name":"DomainDANE","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Required","Docs":"","Typewords":["bool"]},{"Name":"Records","Docs":"","Typewords":["[]","TLSARecord"]},{"Name":"TLSABaseDomain","Docs":"","Typewords":["Domain"]},{"Name":"Error","Docs":"","Typewords":["string"]},{"Name":"VerifiedRecord","Docs":"","Typewords":["nullable","TLSARecord"]}]},
 	"TLSARecord": {"Name":"TLSARecord","Docs":"","Fields":[{"Name":"Usage","Docs":"","Typewords":["TLSAUsage"]},{"Name":"Selector","Docs":"","Typewords":["TLSASelector"]},{"Name":"MatchType","Docs":"","Typewords":["TLSAMatchType"]},{"Name":"CertAssoc","Docs":"","Typewords":["nullable","string"]}]},
 	"DomainDial": {"Name":"DomainDial","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"IP","Docs":"","Typewords":["IP"]},{"Name":"Error","Docs":"","Typewords":["string"]}]},
 	"DomainSMTP": {"Name":"DomainSMTP","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Error","Docs":"","Typewords":["string"]},{"Name":"Supports8bitMIME","Docs":"","Typewords":["bool"]},{"Name":"SupportsRequireTLS","Docs":"","Typewords":["bool"]},{"Name":"SupportsSMTPUTF8","Docs":"","Typewords":["bool"]},{"Name":"SupportsSTARTTLS","Docs":"","Typewords":["bool"]},{"Name":"TLSConnectionState","Docs":"","Typewords":["nullable","TLSConnectionState"]},{"Name":"RecipientDomainResult","Docs":"","Typewords":["nullable","TLSRPTResult"]},{"Name":"HostResult","Docs":"","Typewords":["nullable","TLSRPTResult"]},{"Name":"Trace","Docs":"","Typewords":["[]","Proto"]}]},

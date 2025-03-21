@@ -215,7 +215,7 @@ const domainCheckResult = (dr: api.DomainResult) => {
 			dom.div(dom._class('result'),
 				dom.h4('MX', duration(dr.MX.DurationMS)),
 				errorTag(dr.MX.Error),
-				dr.MX.Error && dr.MX.Permanent ? tag(red, 'permanent') : [],
+				dom.div(dr.MX.Error && dr.MX.Permanent ? tag(red, 'permanent') : []),
 				group(
 					title('Domain'),
 					dom.div(domainString(dr.MX.ExpandedNextHop)),
@@ -312,7 +312,7 @@ const domainCheckResult = (dr: api.DomainResult) => {
 						title('DANE', duration(mx.DANE.DurationMS)),
 						dom.div(
 							errorTag(mx.DANE.Error),
-							mx.DANE.Required ? tag(green, 'implemented') : tag(red, 'not implemented'),
+							dom.div(mx.DANE.Required ? tag(green, 'implemented') : tag(red, 'not implemented')),
 							mx.DANE.Required ?
 								dom.div('Delivery to this MX host is protected with verified TLS.', attr.title(daneExplain)) :
 								dom.div('Delivery to this MX host is not protected with DANE-verified TLS.', attr.title(daneExplain)),
@@ -325,7 +325,7 @@ const domainCheckResult = (dr: api.DomainResult) => {
 								(mx.DANE.Records || []).map(r => {
 									const [s, e] = formatDANERecord(r)
 									const [vrs, _] = mx.DANE.VerifiedRecord ? formatDANERecord(mx.DANE.VerifiedRecord) : ['', []]
-									return dom.div(dom._class('mono'), tag(s == vrs ? green : grey, e))
+									return dom.div(dom._class('mono'), tag(s === vrs ? green : grey, e))
 								}),
 							] : [],
 						),

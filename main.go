@@ -491,7 +491,7 @@ type DomainDANE struct {
 	Records        []TLSARecord
 	TLSABaseDomain dns.Domain
 	Error          string
-	VerifiedRecord TLSARecord
+	VerifiedRecord *TLSARecord
 }
 
 type Proto struct {
@@ -720,7 +720,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 				for i, r := range daneRecords {
 					tlsarecords[i] = TLSARecord{r}
 				}
-				mx.DANE = DomainDANE{timeSince(t0dane), daneRequired, tlsarecords, tlsaBaseDomain, errmsg(err), TLSARecord{}}
+				mx.DANE = DomainDANE{timeSince(t0dane), daneRequired, tlsarecords, tlsaBaseDomain, errmsg(err), nil}
 			}
 
 			if !dial {
@@ -764,7 +764,11 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 			client.Close()
 			mx.SMTP.DurationMS = timeSince(t0smtp)
 
-			mx.DANE.VerifiedRecord = TLSARecord{daneVerifiedRecord}
+			if daneVerifiedRecord.CertAssoc != nil {
+				mx.DANE.VerifiedRecord = &TLSARecord{daneVerifiedRecord}
+			} else if mx.DANE.Required && mx.DANE.Error == "" {
+				mx.DANE.Error = "no matching TLSA record"
+			}
 
 			mx.SMTP.Supports8bitMIME = client.Supports8BITMIME()
 			mx.SMTP.SupportsRequireTLS = client.SupportsRequireTLS()

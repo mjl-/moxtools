@@ -1286,6 +1286,7 @@
 					"Name": "VerifiedRecord",
 					"Docs": "",
 					"Typewords": [
+						"nullable",
 						"TLSARecord"
 					]
 				}
