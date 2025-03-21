@@ -776,7 +776,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 			mx.SMTP.SupportsSTARTTLS = client.SupportsStartTLS()
 			if cs != nil {
 				mx.SMTP.TLSConnectionState = &TLSConnectionState{
-					Version:            tlsVersionName(cs.Version),
+					Version:            tls.VersionName(cs.Version),
 					CipherSuite:        tls.CipherSuiteName(cs.CipherSuite),
 					NegotiatedProtocol: cs.NegotiatedProtocol,
 					ServerName:         cs.ServerName,
@@ -888,21 +888,4 @@ func (d *limitDialer) DialContext(ctx context.Context, network, addr string) (c 
 	}
 	nd := &net.Dialer{}
 	return nd.DialContext(ctx, network, addr)
-}
-
-var tlsVersions = map[uint16]string{
-	tls.VersionSSL30: "SSLv3",
-	tls.VersionTLS10: "TLS 1.0",
-	tls.VersionTLS11: "TLS 1.1",
-	tls.VersionTLS12: "TLS 1.2",
-	tls.VersionTLS13: "TLS 1.3",
-}
-
-// tls.VersionName was introduced in go1.21
-func tlsVersionName(version uint16) string {
-	s, ok := tlsVersions[version]
-	if !ok {
-		return fmt.Sprintf("%04x", version)
-	}
-	return s
 }
