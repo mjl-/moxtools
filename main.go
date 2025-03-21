@@ -39,6 +39,7 @@ import (
 	"github.com/mjl-/mox/smtpclient"
 	"github.com/mjl-/mox/spf"
 	"github.com/mjl-/mox/tlsrpt"
+	"slices"
 )
 
 var listen string
@@ -862,7 +863,7 @@ func (h *traceHandler) Handle(ctx context.Context, r slog.Record) error {
 
 func (h *traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// We keep the same traceHandler instance so we can get the trace after logging.
-	h.Attrs = append([]slog.Attr{}, append(h.Attrs, attrs...)...)
+	h.Attrs = slices.Clone(append(h.Attrs, attrs...))
 	return h
 }
 
