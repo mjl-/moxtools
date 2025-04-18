@@ -16,6 +16,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"slices"
 )
 
 var noctx = context.Background()
@@ -198,11 +200,21 @@ func (l Log) WithFunc(fn func() []slog.Attr) Log {
 }
 
 // Check logs an error if err is not nil. Intended for logging errors that are good
-// to know, but would not influence program flow.
+// to know, but would not influence program flow. Context deadline/cancelation
+// errors and timeouts are logged at "info" level. Closed remote connections are
+// logged at "debug" level. Other errors at "error" level.
 func (l Log) Check(err error, msg string, attrs ...slog.Attr) {
-	if err != nil {
-		l.Errorx(msg, err, attrs...)
+	if err == nil {
+		return
 	}
+	level := LevelError
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, os.ErrDeadlineExceeded) {
+		level = LevelInfo
+	} else if IsClosed(err) {
+		level = LevelDebug
+	}
+	attrs = append([]slog.Attr{errAttr(err)}, attrs...)
+	l.Logger.LogAttrs(noctx, level, msg, attrs...)
 }
 
 func errAttr(err error) slog.Attr {
@@ -301,14 +313,20 @@ func (l Log) Trace(level slog.Level, prefix string, data []byte) {
 	}
 
 	var msg string
+	size := -1
 	if hideData, hideAuth := traceLevel(filterLevel, level); hideData {
 		msg = prefix + "..."
+		size = len(data)
 	} else if hideAuth {
 		msg = prefix + "***"
 	} else {
 		msg = prefix + string(data)
+		size = len(data)
 	}
 	r := slog.NewRecord(time.Time{}, level, msg, 0)
+	if size >= 0 {
+		r.AddAttrs(slog.Int("size", size))
+	}
 	ph.write(filterLevel, r)
 }
 
@@ -386,6 +404,8 @@ func formatString(s string) string {
 	return s
 }
 
+var typeTime = reflect.TypeFor[time.Time]()
+
 func stringValue(iscid, nested bool, v any) string {
 	// Handle some common types first.
 	if v == nil {
@@ -446,7 +466,7 @@ func stringValue(iscid, nested bool, v any) string {
 		}
 		b := &strings.Builder{}
 		b.WriteString("[")
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if i > 0 {
 				b.WriteString(";")
 			}
@@ -463,15 +483,16 @@ func stringValue(iscid, nested bool, v any) string {
 	// We first try making a string without recursing into structs/pointers/interfaces,
 	// but will try again with those fields if we otherwise would otherwise log an
 	// empty string.
-	for j := 0; j < 2; j++ {
+	for j := range 2 {
 		first := true
 		b := &strings.Builder{}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			fv := rv.Field(i)
 			if !t.Field(i).IsExported() {
 				continue
 			}
-			if j == 0 && (fv.Kind() == reflect.Struct || fv.Kind() == reflect.Ptr || fv.Kind() == reflect.Interface) {
+			// todo: decide on better approach about which fields to include while preventing recursion
+			if j == 0 && (fv.Kind() == reflect.Struct || fv.Kind() == reflect.Ptr || fv.Kind() == reflect.Interface) && fv.Type() != typeTime {
 				// Don't recurse.
 				continue
 			}
@@ -575,7 +596,11 @@ func (h *handler) write(l slog.Level, r slog.Record) error {
 			}
 		}
 
-		fmt.Fprint(eb, LevelStrings[r.Level], ": ", r.Message)
+		msg := r.Message
+		if r.Level <= LevelTrace {
+			msg = fmt.Sprintf("%q", msg)
+		}
+		fmt.Fprint(eb, LevelStrings[r.Level], ": ", msg)
 		n := 0
 		r.Attrs(func(a slog.Attr) bool {
 			if n == 0 && a.Key == "err" && h.Group == "" {
@@ -626,7 +651,7 @@ func (w *errWriter) Write(buf []byte) (int, error) {
 func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	nh := *h
 	if h.Attrs != nil {
-		nh.Attrs = append([]slog.Attr{}, h.Attrs...)
+		nh.Attrs = slices.Clone(h.Attrs)
 	}
 	nh.Attrs = append(nh.Attrs, attrs...)
 	return &nh
@@ -644,7 +669,7 @@ func (h *handler) WithGroup(name string) slog.Handler {
 func (h *handler) WithPkg(pkg string) *handler {
 	nh := *h
 	if nh.Pkgs != nil {
-		nh.Pkgs = append([]string{}, nh.Pkgs...)
+		nh.Pkgs = slices.Clone(nh.Pkgs)
 	}
 	nh.Pkgs = append(nh.Pkgs, pkg)
 	return &nh

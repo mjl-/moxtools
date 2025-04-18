@@ -311,9 +311,9 @@ func New(ctx context.Context, elog *slog.Logger, conn net.Conn, tlsMode TLSMode,
 		c.firstReadAfterHandshake = true
 		c.tlsResultAdd(1, 0, nil)
 		c.conn = tlsconn
-		tlsversion, ciphersuite := moxio.TLSInfo(tlsconn)
+		version, ciphersuite := moxio.TLSInfo(tlsconn.ConnectionState())
 		c.log.Debug("tls client handshake done",
-			slog.String("tls", tlsversion),
+			slog.String("version", version),
 			slog.String("ciphersuite", ciphersuite),
 			slog.Any("servername", remoteHostname))
 		c.tls = true
@@ -828,13 +828,13 @@ func (c *Client) hello(ctx context.Context, tlsMode TLSMode, ehloHostname dns.Do
 		c.r = bufio.NewReader(c.tr)
 		c.w = bufio.NewWriter(c.tw)
 
-		tlsversion, ciphersuite := moxio.TLSInfo(nconn)
+		version, ciphersuite := moxio.TLSInfo(nconn.ConnectionState())
 		c.log.Debug("starttls client handshake done",
 			slog.Any("tlsmode", tlsMode),
 			slog.Bool("verifypkix", c.tlsVerifyPKIX),
 			slog.Bool("verifydane", c.daneRecords != nil),
 			slog.Bool("ignoretlsverifyerrors", c.ignoreTLSVerifyErrors),
-			slog.String("tls", tlsversion),
+			slog.String("version", version),
 			slog.String("ciphersuite", ciphersuite),
 			slog.Any("servername", c.remoteHostname),
 			slog.Any("danerecord", c.daneVerifiedRecord))
@@ -1095,8 +1095,8 @@ func (c *Client) TLSConnectionState() *tls.ConnectionState {
 // mailFrom must be an email address, or empty in case of a DSN. rcptTo must be
 // an email address.
 //
-// If the message contains bytes with the high bit set, req8bitmime must be true. If
-// set, the remote server must support the 8BITMIME extension or delivery will
+// If the message contains bytes with the high bit set, req8bitmime should be true.
+// If set, the remote server must support the 8BITMIME extension or delivery will
 // fail.
 //
 // If the message is internationalized, e.g. when headers contain non-ASCII
@@ -1149,10 +1149,7 @@ func (c *Client) DeliverMultiple(ctx context.Context, mailFrom string, rcptTo []
 	}
 
 	if !c.ext8bitmime && req8bitmime {
-		// Temporary error, e.g. OpenBSD spamd does not announce 8bitmime support, but once
-		// you get through, the mail server behind it probably does. Just needs a few
-		// retries.
-		c.xerrorf(false, 0, "", "", nil, "%w", Err8bitmimeUnsupported)
+		c.xerrorf(true, 0, "", "", nil, "%w", Err8bitmimeUnsupported)
 	}
 	if !c.extSMTPUTF8 && reqSMTPUTF8 {
 		// ../rfc/6531:313
@@ -1246,7 +1243,7 @@ func (c *Client) DeliverMultiple(ctx context.Context, mailFrom string, rcptTo []
 		// Read responses to RCPT TO.
 		rcptResps = make([]Response, len(rcptTo))
 		nok := 0
-		for i := 0; i < len(rcptTo); i++ {
+		for i := range rcptTo {
 			code, secode, firstLine, moreLines, err := c.read()
 			// 552 should be treated as temporary historically, ../rfc/5321:3576
 			permanent := code/100 == 5 && code != smtp.C552MailboxFull

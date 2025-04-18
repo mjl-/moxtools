@@ -27,6 +27,7 @@ import (
 
 	"github.com/mjl-/mox/mlog"
 	"github.com/mjl-/mox/smtp"
+	"slices"
 )
 
 // Pedantic enables stricter parsing.
@@ -64,10 +65,14 @@ type Part struct {
 	MediaType               string            // From Content-Type, upper case. E.g. "TEXT". Can be empty because content-type may be absent. In this case, the part may be treated as TEXT/PLAIN.
 	MediaSubType            string            // From Content-Type, upper case. E.g. "PLAIN".
 	ContentTypeParams       map[string]string // E.g. holds "boundary" for multipart messages. Has lower-case keys, and original case values.
-	ContentID               string
-	ContentDescription      string
-	ContentTransferEncoding string    // In upper case.
-	Envelope                *Envelope // Email message headers. Not for non-message parts.
+	ContentID               *string           `json:",omitempty"`
+	ContentDescription      *string           `json:",omitempty"`
+	ContentTransferEncoding *string           `json:",omitempty"` // In upper case.
+	ContentDisposition      *string           `json:",omitempty"`
+	ContentMD5              *string           `json:",omitempty"`
+	ContentLanguage         *string           `json:",omitempty"`
+	ContentLocation         *string           `json:",omitempty"`
+	Envelope                *Envelope         `json:",omitempty"` // Email message headers. Not for non-message parts.
 
 	Parts []Part // Parts if this is a multipart.
 
@@ -154,6 +159,10 @@ func fallbackPart(p Part, r io.ReaderAt, size int64) (Part, error) {
 		ContentID:               p.ContentID,
 		ContentDescription:      p.ContentDescription,
 		ContentTransferEncoding: p.ContentTransferEncoding,
+		ContentDisposition:      p.ContentDisposition,
+		ContentMD5:              p.ContentMD5,
+		ContentLanguage:         p.ContentLanguage,
+		ContentLocation:         p.ContentLocation,
 		Envelope:                p.Envelope,
 		// We don't keep:
 		//   - BoundaryOffset: irrelevant for top-level message.
@@ -353,9 +362,18 @@ func newPart(log mlog.Log, strict bool, r io.ReaderAt, offset int64, parent *Par
 		}
 	}
 
-	p.ContentID = p.header.Get("Content-Id")
-	p.ContentDescription = p.header.Get("Content-Description")
-	p.ContentTransferEncoding = strings.ToUpper(p.header.Get("Content-Transfer-Encoding"))
+	p.ContentID = p.headerGet("Content-Id")
+	p.ContentDescription = p.headerGet("Content-Description")
+	cte := p.headerGet("Content-Transfer-Encoding")
+	if cte != nil {
+		s := strings.ToUpper(*cte)
+		cte = &s
+	}
+	p.ContentTransferEncoding = cte
+	p.ContentDisposition = p.headerGet("Content-Disposition")
+	p.ContentMD5 = p.headerGet("Content-Md5")
+	p.ContentLanguage = p.headerGet("Content-Language")
+	p.ContentLocation = p.headerGet("Content-Location")
 
 	if parent == nil {
 		p.Envelope, err = parseEnvelope(log, mail.Header(p.header))
@@ -409,6 +427,15 @@ func (p *Part) Header() (textproto.MIMEHeader, error) {
 	h, err := parseHeader(p.HeaderReader())
 	p.header = h
 	return h, err
+}
+
+func (p *Part) headerGet(k string) *string {
+	l := p.header.Values(k)
+	if len(l) == 0 {
+		return nil
+	}
+	s := l[0]
+	return &s
 }
 
 // HeaderReader returns a reader for the header section of this part, including ending bare CRLF.
@@ -643,15 +670,11 @@ var ErrParamEncoding = errors.New("bad header parameter encoding")
 // If the returned error is an ErrParamEncoding, it can be treated as a diagnostic
 // and a filename may still be returned.
 func (p *Part) DispositionFilename() (disposition string, filename string, err error) {
-	h, err := p.Header()
-	if err != nil {
-		return "", "", fmt.Errorf("parsing header: %v", err)
-	}
+	cd := p.ContentDisposition
 	var disp string
 	var params map[string]string
-	cd := h.Get("Content-Disposition")
-	if cd != "" {
-		disp, params, err = mime.ParseMediaType(cd)
+	if cd != nil && *cd != "" {
+		disp, params, err = mime.ParseMediaType(*cd)
 	}
 	if err != nil {
 		return "", "", fmt.Errorf("%w: parsing disposition header: %v", ErrParamEncoding, err)
@@ -754,10 +777,12 @@ func (tr *textReader) Read(buf []byte) (int, error) {
 			return o, err
 		}
 		if c == '\n' && !tr.prevcr {
+			if err := tr.r.UnreadByte(); err != nil {
+				return o, err
+			}
 			buf[o] = '\r'
 			o++
 			tr.prevcr = true
-			tr.r.UnreadByte()
 			continue
 		}
 		buf[o] = c
@@ -768,9 +793,13 @@ func (tr *textReader) Read(buf []byte) (int, error) {
 	return o, nil
 }
 
-func newDecoder(cte string, r io.Reader) io.Reader {
+func newDecoder(cte *string, r io.Reader) io.Reader {
+	var s string
+	if cte != nil {
+		s = *cte
+	}
 	// ../rfc/2045:775
-	switch cte {
+	switch s {
 	case "BASE64":
 		return base64.NewDecoder(base64.StdEncoding, r)
 	case "QUOTED-PRINTABLE":
@@ -848,10 +877,8 @@ func (b *bufAt) maxLineLength() int {
 
 // ensure makes sure b.nbuf is up to maxLineLength, unless eof is encountered.
 func (b *bufAt) ensure() error {
-	for _, c := range b.buf[:b.nbuf] {
-		if c == '\n' {
-			return nil
-		}
+	if slices.Contains(b.buf[:b.nbuf], '\n') {
+		return nil
 	}
 	if b.scratch == nil {
 		b.scratch = make([]byte, b.maxLineLength())
@@ -1014,10 +1041,7 @@ func (b *boundReader) Read(buf []byte) (count int, rerr error) {
 	for {
 		// Read data from earlier line.
 		if b.nbuf > 0 {
-			n := b.nbuf
-			if n > len(buf) {
-				n = len(buf)
-			}
+			n := min(b.nbuf, len(buf))
 			copy(buf, b.buf[:n])
 			copy(b.buf, b.buf[n:])
 			buf = buf[n:]
@@ -1046,10 +1070,7 @@ func (b *boundReader) Read(buf []byte) (count int, rerr error) {
 			return count, err
 		}
 		if len(b.crlf) > 0 {
-			n := len(b.crlf)
-			if n > len(buf) {
-				n = len(buf)
-			}
+			n := min(len(b.crlf), len(buf))
 			copy(buf, b.crlf[:n])
 			count += n
 			buf = buf[n:]

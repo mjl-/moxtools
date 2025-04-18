@@ -135,7 +135,7 @@ func (r *DataReader) Read(p []byte) (int, error) {
 		if len(r.buf) > 0 {
 			// Reject bare \r.
 			for i, c := range r.buf {
-				if c == '\r' && (i == len(r.buf) || r.buf[i+1] != '\n') {
+				if c == '\r' && (i == len(r.buf)-1 || r.buf[i+1] != '\n') {
 					r.badcrlf = true
 				}
 			}
@@ -164,10 +164,7 @@ func (r *DataReader) Read(p []byte) (int, error) {
 				// Reject "[^\r]\n.\n" and "[^\r]\n.\r\n"
 				r.badcrlf = true
 			}
-			n := len(r.buf)
-			if n > len(p) {
-				n = len(p)
-			}
+			n := min(len(r.buf), len(p))
 			copy(p, r.buf[:n])
 			if n == 1 {
 				r.plast, r.last = r.last, r.buf[0]
