@@ -16,7 +16,7 @@ github.com/mjl-/adns/internal/singleflight
 # github.com/mjl-/flate v0.0.0-20250221133712-6372d09eb978
 ## explicit; go 1.21
 github.com/mjl-/flate
-# github.com/mjl-/mox v0.0.15
+# github.com/mjl-/mox v0.0.16-0.20250515143753-91bfff220e64
 ## explicit; go 1.23.0
 github.com/mjl-/mox/dane
 github.com/mjl-/mox/dkim

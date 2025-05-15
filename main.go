@@ -592,6 +592,7 @@ type DomainDial struct {
 type DomainMXHost struct {
 	DurationMS  int
 	Host        dns.IPDomain
+	Preference  int // -1 if not from MX record.
 	MTASTSError string
 	IP          DomainIP
 	DANE        DomainDANE
@@ -816,21 +817,22 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 
 		t0 := time.Now()
 
-		var hosts []dns.IPDomain
+		var hostPrefs []smtpclient.HostPref
 		var err error
-		dr.MX.Have, dr.MX.OrigNextHopAuthentic, dr.MX.ExpandedNextHopAuthentic, dr.MX.ExpandedNextHop, hosts, dr.MX.Permanent, err = smtpclient.GatherDestinations(opctx, log.Logger, resolver, dns.IPDomain{Domain: dom})
+		dr.MX.Have, dr.MX.OrigNextHopAuthentic, dr.MX.ExpandedNextHopAuthentic, dr.MX.ExpandedNextHop, hostPrefs, dr.MX.Permanent, err = smtpclient.GatherDestinations(opctx, log.Logger, resolver, dns.IPDomain{Domain: dom})
 		dr.MX.Error = errmsg(err)
 		dr.MX.DurationMS = timeSince(t0)
 
 		mtastswg.Wait()
 
-		dr.MXHosts = make([]DomainMXHost, len(hosts))
-		for i, h := range hosts {
-			dr.MXHosts[i].Host = h
+		dr.MXHosts = make([]DomainMXHost, len(hostPrefs))
+		for i, hp := range hostPrefs {
+			dr.MXHosts[i].Host = hp.Host
+			dr.MXHosts[i].Preference = hp.Pref
 			var pkix bool
 			if dr.MTASTS.Policy != nil && dr.MTASTS.Policy.Mode != mtasts.ModeNone {
 				pkix = true
-				if !dr.MTASTS.Policy.Matches(h.Domain) {
+				if !dr.MTASTS.Policy.Matches(hp.Host.Domain) {
 					dr.MXHosts[i].MTASTSError = "MX target does not match MTA-STS policy"
 				}
 			}

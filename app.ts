@@ -224,7 +224,7 @@ const domainCheckResult = (dr: api.DomainResult) => {
 				),
 				group(
 					title('Hosts'),
-					(dr.MXHosts || []).map(mx => dom.div(ipdomainString(mx.Host))),
+					(dr.MXHosts || []).map(mx => dom.div(ipdomainString(mx.Host), mx.Preference >= 0 ? ' (pref '+mx.Preference+')' : [])),
 				),
 			),
 			dom.div(dom._class('result'),
@@ -288,7 +288,7 @@ const domainCheckResult = (dr: api.DomainResult) => {
 			(dr.MXHosts || []).map(mx => {
 				let starttls = false
 				return dom.div(dom._class('result'),
-					dom.h4('MX host: ' + ipdomainString(mx.Host), duration(mx.DurationMS)),
+					dom.h4('MX host: ' + ipdomainString(mx.Host), mx.Preference >= 0 ? ' (pref '+mx.Preference+')' : [], duration(mx.DurationMS)),
 					group(
 						title('MTA-STS'),
 						errorTag(mx.MTASTSError),

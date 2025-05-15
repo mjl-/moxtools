@@ -217,6 +217,7 @@ export interface DomainMX {
 export interface DomainMXHost {
 	DurationMS: number
 	Host: IPDomain
+	Preference: number  // -1 if not from MX record.
 	MTASTSError: string
 	IP: DomainIP
 	DANE: DomainDANE
@@ -417,7 +418,7 @@ export const types: TypenameMap = {
 	"Policy": {"Name":"Policy","Docs":"","Fields":[{"Name":"Version","Docs":"","Typewords":["string"]},{"Name":"Mode","Docs":"","Typewords":["Mode"]},{"Name":"MX","Docs":"","Typewords":["[]","MX"]},{"Name":"MaxAgeSeconds","Docs":"","Typewords":["int32"]},{"Name":"Extensions","Docs":"","Typewords":["[]","Pair"]}]},
 	"MX": {"Name":"MX","Docs":"","Fields":[{"Name":"Wildcard","Docs":"","Typewords":["bool"]},{"Name":"Domain","Docs":"","Typewords":["Domain"]}]},
 	"DomainMX": {"Name":"DomainMX","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Have","Docs":"","Typewords":["bool"]},{"Name":"OrigNextHopAuthentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedNextHopAuthentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedNextHop","Docs":"","Typewords":["Domain"]},{"Name":"Permanent","Docs":"","Typewords":["bool"]},{"Name":"Error","Docs":"","Typewords":["string"]}]},
-	"DomainMXHost": {"Name":"DomainMXHost","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Host","Docs":"","Typewords":["IPDomain"]},{"Name":"MTASTSError","Docs":"","Typewords":["string"]},{"Name":"IP","Docs":"","Typewords":["DomainIP"]},{"Name":"DANE","Docs":"","Typewords":["DomainDANE"]},{"Name":"Dial","Docs":"","Typewords":["DomainDial"]},{"Name":"SMTP","Docs":"","Typewords":["DomainSMTP"]}]},
+	"DomainMXHost": {"Name":"DomainMXHost","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Host","Docs":"","Typewords":["IPDomain"]},{"Name":"Preference","Docs":"","Typewords":["int32"]},{"Name":"MTASTSError","Docs":"","Typewords":["string"]},{"Name":"IP","Docs":"","Typewords":["DomainIP"]},{"Name":"DANE","Docs":"","Typewords":["DomainDANE"]},{"Name":"Dial","Docs":"","Typewords":["DomainDial"]},{"Name":"SMTP","Docs":"","Typewords":["DomainSMTP"]}]},
 	"IPDomain": {"Name":"IPDomain","Docs":"","Fields":[{"Name":"IP","Docs":"","Typewords":["IP"]},{"Name":"Domain","Docs":"","Typewords":["Domain"]}]},
 	"DomainIP": {"Name":"DomainIP","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Authentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedAuthentic","Docs":"","Typewords":["bool"]},{"Name":"ExpandedHost","Docs":"","Typewords":["Domain"]},{"Name":"IPs","Docs":"","Typewords":["[]","IP"]},{"Name":"DualStack","Docs":"","Typewords":["bool"]},{"Name":"Error","Docs":"","Typewords":["string"]}]},
 	"DomainDANE": {"Name":"DomainDANE","Docs":"","Fields":[{"Name":"DurationMS","Docs":"","Typewords":["int32"]},{"Name":"Required","Docs":"","Typewords":["bool"]},{"Name":"Records","Docs":"","Typewords":["[]","TLSARecord"]},{"Name":"TLSABaseDomain","Docs":"","Typewords":["Domain"]},{"Name":"Error","Docs":"","Typewords":["string"]},{"Name":"VerifiedRecord","Docs":"","Typewords":["nullable","TLSARecord"]}]},

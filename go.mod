@@ -4,7 +4,7 @@ go 1.23.0
 
 require (
 	github.com/mjl-/adns v0.0.0-20250321173553-ab04b05bdfea
-	github.com/mjl-/mox v0.0.15
+	github.com/mjl-/mox v0.0.16-0.20250515143753-91bfff220e64
 	github.com/mjl-/sherpa v0.6.7
 	github.com/mjl-/sherpadoc v0.0.17
 	github.com/mjl-/sherpaprom v0.0.2
