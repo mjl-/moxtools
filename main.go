@@ -631,7 +631,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 	log.Debug("domaincheck call", slog.String("domain", domain))
 
 	dom, err := dns.ParseDomain(domain)
-	xcheck(err, "parsing domain")
+	xcheckuser(err, "parsing domain")
 
 	start := time.Now()
 
