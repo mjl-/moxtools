@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/mjl-/adns v0.0.0-20250321173553-ab04b05bdfea
-	github.com/mjl-/mox v0.0.16-0.20250515143753-91bfff220e64
+	github.com/mjl-/mox v0.0.16-0.20260802212300-60925dd239d8
 	github.com/mjl-/sherpa v0.6.7
 	github.com/mjl-/sherpadoc v0.0.17
 	github.com/mjl-/sherpaprom v0.0.2
@@ -20,12 +20,11 @@ require (
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.45.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
-	golang.org/x/tools v0.45.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
+	golang.org/x/tools v0.47.0 // indirect
 	google.golang.org/protobuf v1.31.0 // indirect
 )
