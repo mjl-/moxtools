@@ -394,7 +394,7 @@ func TLSFailureDetails(err error) (ResultType, string) {
 			// todo: ideally, crypto/tls would let us check if this is an alert. it could be another uint8-typed error.
 			v := reflect.ValueOf(netErr.Err)
 			if v.Kind() == reflect.Uint8 && v.Type().Name() == "alert" {
-				reasonCode = "tls-remote-" + formatAlert(uint8(v.Uint()))
+				reasonCode = "tls-remote-" + FormatAlert(uint8(v.Uint()))
 			}
 		}
 		return ResultValidationFailure, reasonCode
@@ -414,7 +414,7 @@ func TLSFailureDetails(err error) (ResultType, string) {
 	var reasonCode string
 	if errors.Is(err, os.ErrDeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
 		reasonCode = "io-timeout-during-handshake"
-	} else if moxio.IsClosed(err) || errors.Is(err, io.ErrClosedPipe) {
+	} else if mlog.IsClosed(err) || errors.Is(err, io.ErrClosedPipe) {
 		reasonCode = "connection-closed-during-handshake"
 	} else {
 		// Attempt to get a local, outgoing TLS alert.
@@ -429,7 +429,7 @@ func TLSFailureDetails(err error) (ResultType, string) {
 		}
 		v := reflect.ValueOf(err)
 		if v.Kind() == reflect.Uint8 && v.Type().Name() == "alert" {
-			reasonCode = "tls-local-" + formatAlert(uint8(v.Uint()))
+			reasonCode = "tls-local-" + FormatAlert(uint8(v.Uint()))
 		}
 	}
 	return ResultValidationFailure, reasonCode

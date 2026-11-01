@@ -31,6 +31,7 @@ import (
 	"github.com/mjl-/mox/publicsuffix"
 	"github.com/mjl-/mox/smtp"
 	"github.com/mjl-/mox/stub"
+	"slices"
 )
 
 // If set, signatures for top-level domain "localhost" are accepted.
@@ -173,7 +174,7 @@ func Sign(ctx context.Context, elog *slog.Logger, localpart smtp.Localpart, doma
 		sig.Domain = domain
 		sig.Selector = sel.Domain
 		sig.Identity = &Identity{&localpart, domain}
-		sig.SignedHeaders = append([]string{}, sel.Headers...)
+		sig.SignedHeaders = slices.Clone(sel.Headers)
 		if sel.SealHeaders {
 			// ../rfc/6376:2156
 			// Each time a header name is added to the signature, the next unused value is
@@ -548,7 +549,7 @@ func verifySignatureRecord(r *Record, sig *Sig, hash crypto.Hash, canonHeaderSim
 	if r.PublicKey == nil {
 		return StatusPermerror, ErrKeyRevoked
 	} else if rsaKey, ok := r.PublicKey.(*rsa.PublicKey); ok && rsaKey.N.BitLen() < 1024 {
-		// todo: find a reference that supports this.
+		// ../rfc/8301:157
 		return StatusPermerror, ErrWeakKey
 	}
 
@@ -719,7 +720,7 @@ func bodyHash(h hash.Hash, canonSimple bool, body *bufio.Reader) ([]byte, error)
 }
 
 func dataHash(h hash.Hash, canonSimple bool, sig *Sig, hdrs []header, verifySig []byte) ([]byte, error) {
-	headers := ""
+	var headers strings.Builder
 	revHdrs := map[string][]header{}
 	for _, h := range hdrs {
 		revHdrs[h.lkey] = append([]header{h}, revHdrs[h.lkey]...)
@@ -736,17 +737,17 @@ func dataHash(h hash.Hash, canonSimple bool, sig *Sig, hdrs []header, verifySig 
 		if canonSimple {
 			// ../rfc/6376:823
 			// Add unmodified.
-			headers += s
+			headers.WriteString(s)
 		} else {
 			ch, err := relaxedCanonicalHeaderWithoutCRLF(s)
 			if err != nil {
 				return nil, fmt.Errorf("canonicalizing header: %w", err)
 			}
-			headers += ch + "\r\n"
+			headers.WriteString(ch + "\r\n")
 		}
 	}
 	// ../rfc/6376:2377, canonicalization does not apply to the dkim-signature header.
-	h.Write([]byte(headers))
+	h.Write([]byte(headers.String()))
 	dkimSig := verifySig
 	if !canonSimple {
 		ch, err := relaxedCanonicalHeaderWithoutCRLF(string(verifySig))
@@ -839,8 +840,8 @@ func parseHeaders(br *bufio.Reader) ([]header, int, error) {
 			return nil, 0, fmt.Errorf("empty header key")
 		}
 		lkey = strings.ToLower(key)
-		value = append([]byte{}, t[1]...)
-		raw = append([]byte{}, line...)
+		value = slices.Clone(t[1])
+		raw = slices.Clone(line)
 	}
 	if key != "" {
 		l = append(l, header{key, lkey, value, raw})

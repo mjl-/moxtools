@@ -21,11 +21,13 @@ import (
 	"net/textproto"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/text/encoding/ianaindex"
 
 	"github.com/mjl-/mox/mlog"
 	"github.com/mjl-/mox/smtp"
+	"slices"
 )
 
 // Pedantic enables stricter parsing.
@@ -63,10 +65,14 @@ type Part struct {
 	MediaType               string            // From Content-Type, upper case. E.g. "TEXT". Can be empty because content-type may be absent. In this case, the part may be treated as TEXT/PLAIN.
 	MediaSubType            string            // From Content-Type, upper case. E.g. "PLAIN".
 	ContentTypeParams       map[string]string // E.g. holds "boundary" for multipart messages. Has lower-case keys, and original case values.
-	ContentID               string
-	ContentDescription      string
-	ContentTransferEncoding string    // In upper case.
-	Envelope                *Envelope // Email message headers. Not for non-message parts.
+	ContentID               *string           `json:",omitempty"`
+	ContentDescription      *string           `json:",omitempty"`
+	ContentTransferEncoding *string           `json:",omitempty"` // In upper case.
+	ContentDisposition      *string           `json:",omitempty"`
+	ContentMD5              *string           `json:",omitempty"`
+	ContentLanguage         *string           `json:",omitempty"`
+	ContentLocation         *string           `json:",omitempty"`
+	Envelope                *Envelope         `json:",omitempty"` // Email message headers. Not for non-message parts.
 
 	Parts []Part // Parts if this is a multipart.
 
@@ -153,6 +159,10 @@ func fallbackPart(p Part, r io.ReaderAt, size int64) (Part, error) {
 		ContentID:               p.ContentID,
 		ContentDescription:      p.ContentDescription,
 		ContentTransferEncoding: p.ContentTransferEncoding,
+		ContentDisposition:      p.ContentDisposition,
+		ContentMD5:              p.ContentMD5,
+		ContentLanguage:         p.ContentLanguage,
+		ContentLocation:         p.ContentLocation,
 		Envelope:                p.Envelope,
 		// We don't keep:
 		//   - BoundaryOffset: irrelevant for top-level message.
@@ -352,9 +362,18 @@ func newPart(log mlog.Log, strict bool, r io.ReaderAt, offset int64, parent *Par
 		}
 	}
 
-	p.ContentID = p.header.Get("Content-Id")
-	p.ContentDescription = p.header.Get("Content-Description")
-	p.ContentTransferEncoding = strings.ToUpper(p.header.Get("Content-Transfer-Encoding"))
+	p.ContentID = p.headerGet("Content-Id")
+	p.ContentDescription = p.headerGet("Content-Description")
+	cte := p.headerGet("Content-Transfer-Encoding")
+	if cte != nil {
+		s := strings.ToUpper(*cte)
+		cte = &s
+	}
+	p.ContentTransferEncoding = cte
+	p.ContentDisposition = p.headerGet("Content-Disposition")
+	p.ContentMD5 = p.headerGet("Content-Md5")
+	p.ContentLanguage = p.headerGet("Content-Language")
+	p.ContentLocation = p.headerGet("Content-Location")
 
 	if parent == nil {
 		p.Envelope, err = parseEnvelope(log, mail.Header(p.header))
@@ -408,6 +427,15 @@ func (p *Part) Header() (textproto.MIMEHeader, error) {
 	h, err := parseHeader(p.HeaderReader())
 	p.header = h
 	return h, err
+}
+
+func (p *Part) headerGet(k string) *string {
+	l := p.header.Values(k)
+	if len(l) == 0 {
+		return nil
+	}
+	s := l[0]
+	return &s
 }
 
 // HeaderReader returns a reader for the header section of this part, including ending bare CRLF.
@@ -498,27 +526,26 @@ func parseEnvelope(log mlog.Log, h mail.Header) (*Envelope, error) {
 
 func parseAddressList(log mlog.Log, h mail.Header, k string) []Address {
 	// todo: possibly work around ios mail generating incorrect q-encoded "phrases" with unencoded double quotes? ../rfc/2047:382
-	v := h.Get(k)
-	if v == "" {
-		return nil
-	}
 	parser := mail.AddressParser{WordDecoder: &wordDecoder}
-	l, err := parser.ParseList(v)
-	if err != nil {
-		return nil
-	}
 	var r []Address
-	for _, a := range l {
-		// todo: parse more fully according to ../rfc/5322:959
-		var user, host string
-		addr, err := smtp.ParseNetMailAddress(a.Address)
+	for _, v := range h[textproto.CanonicalMIMEHeaderKey(k)] {
+		l, err := parser.ParseList(v)
 		if err != nil {
-			log.Infox("parsing address (continuing)", err, slog.Any("netmailaddress", a.Address))
-		} else {
-			user = addr.Localpart.String()
-			host = addr.Domain.ASCII
+			log.Infox("parsing address list", err, slog.String("header", k))
+			return nil
 		}
-		r = append(r, Address{a.Name, user, host})
+		for _, a := range l {
+			// todo: parse more fully according to ../rfc/5322:959
+			var user, host string
+			addr, err := smtp.ParseNetMailAddress(a.Address)
+			if err != nil {
+				log.Infox("parsing address (continuing)", err, slog.Any("netmailaddress", a.Address))
+			} else {
+				user = addr.Localpart.String()
+				host = addr.Domain.ASCII
+			}
+			r = append(r, Address{a.Name, user, host})
+		}
 	}
 	return r
 }
@@ -598,6 +625,98 @@ func (p *Part) IsDSN() bool {
 		(p.Parts[1].MediaSubType == "DELIVERY-STATUS" || p.Parts[1].MediaSubType == "GLOBAL-DELIVERY-STATUS")
 }
 
+func hasNonASCII(r io.Reader) (bool, error) {
+	br := bufio.NewReader(r)
+	for {
+		b, err := br.ReadByte()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return false, err
+		}
+		if b > unicode.MaxASCII {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// NeedsSMTPUTF8 returns whether the part needs the SMTPUTF8 extension to be
+// transported, due to non-ascii in message headers.
+func (p *Part) NeedsSMTPUTF8() (bool, error) {
+	if has, err := hasNonASCII(p.HeaderReader()); err != nil {
+		return false, fmt.Errorf("reading header: %w", err)
+	} else if has {
+		return true, nil
+	}
+	for _, pp := range p.Parts {
+		if has, err := pp.NeedsSMTPUTF8(); err != nil || has {
+			return has, err
+		}
+	}
+	return false, nil
+}
+
+var ErrParamEncoding = errors.New("bad header parameter encoding")
+
+// DispositionFilename tries to parse the disposition header and the "filename"
+// parameter. If the filename parameter is absent or can't be parsed, the "name"
+// parameter from the Content-Type header is used for the filename. The returned
+// filename is decoded according to RFC 2231 or RFC 2047. This is a best-effort
+// attempt to find a filename for a part. If no Content-Disposition header, or
+// filename was found, empty values without error are returned.
+//
+// If the returned error is an ErrParamEncoding, it can be treated as a diagnostic
+// and a filename may still be returned.
+func (p *Part) DispositionFilename() (disposition string, filename string, err error) {
+	cd := p.ContentDisposition
+	var disp string
+	var params map[string]string
+	if cd != nil && *cd != "" {
+		disp, params, err = mime.ParseMediaType(*cd)
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("%w: parsing disposition header: %v", ErrParamEncoding, err)
+	}
+	filename, err = tryDecodeParam(params["filename"])
+	if filename == "" {
+		s, err2 := tryDecodeParam(p.ContentTypeParams["name"])
+		filename = s
+		if err == nil {
+			err = err2
+		}
+	}
+	return disp, filename, err
+}
+
+// Attempt q/b-word-decode name, coming from Content-Type "name" field or
+// Content-Disposition "filename" field.
+//
+// RFC 2231 specifies an encoding for non-ascii values in mime header parameters. But
+// it appears common practice to instead just q/b-word encode the values.
+// Thunderbird and gmail.com do this for the Content-Type "name" parameter.
+// gmail.com also does that for the Content-Disposition "filename" parameter, where
+// Thunderbird uses the RFC 2231-defined encoding. Go's mime.ParseMediaType parses
+// the mechanism specified in RFC 2231 only. The value for "name" we get here would
+// already be decoded properly for standards-compliant headers, like
+// "filename*0*=UTF-8”%...; filename*1*=%.... We'll look for Q/B-word encoding
+// markers ("=?"-prefix or "?="-suffix) and try to decode if present. This would
+// only cause trouble for filenames having this prefix/suffix.
+func tryDecodeParam(name string) (string, error) {
+	if name == "" || !strings.HasPrefix(name, "=?") && !strings.HasSuffix(name, "?=") {
+		return name, nil
+	}
+	// todo: find where this is allowed. it seems quite common. perhaps we should remove the pedantic check?
+	if Pedantic {
+		return name, fmt.Errorf("%w: attachment contains rfc2047 q/b-word-encoded mime parameter instead of rfc2231-encoded", ErrParamEncoding)
+	}
+	s, err := wordDecoder.DecodeHeader(name)
+	if err != nil {
+		return name, fmt.Errorf("%w: q/b-word decoding mime parameter: %v", ErrParamEncoding, err)
+	}
+	return s, nil
+}
+
 // Reader returns a reader for the decoded body content.
 func (p *Part) Reader() io.Reader {
 	return p.bodyReader(p.RawReader())
@@ -657,10 +776,12 @@ func (tr *textReader) Read(buf []byte) (int, error) {
 			return o, err
 		}
 		if c == '\n' && !tr.prevcr {
+			if err := tr.r.UnreadByte(); err != nil {
+				return o, err
+			}
 			buf[o] = '\r'
 			o++
 			tr.prevcr = true
-			tr.r.UnreadByte()
 			continue
 		}
 		buf[o] = c
@@ -671,9 +792,13 @@ func (tr *textReader) Read(buf []byte) (int, error) {
 	return o, nil
 }
 
-func newDecoder(cte string, r io.Reader) io.Reader {
+func newDecoder(cte *string, r io.Reader) io.Reader {
+	var s string
+	if cte != nil {
+		s = *cte
+	}
 	// ../rfc/2045:775
-	switch cte {
+	switch s {
 	case "BASE64":
 		return base64.NewDecoder(base64.StdEncoding, r)
 	case "QUOTED-PRINTABLE":
@@ -751,10 +876,8 @@ func (b *bufAt) maxLineLength() int {
 
 // ensure makes sure b.nbuf is up to maxLineLength, unless eof is encountered.
 func (b *bufAt) ensure() error {
-	for _, c := range b.buf[:b.nbuf] {
-		if c == '\n' {
-			return nil
-		}
+	if slices.Contains(b.buf[:b.nbuf], '\n') {
+		return nil
 	}
 	if b.scratch == nil {
 		b.scratch = make([]byte, b.maxLineLength())
@@ -917,10 +1040,7 @@ func (b *boundReader) Read(buf []byte) (count int, rerr error) {
 	for {
 		// Read data from earlier line.
 		if b.nbuf > 0 {
-			n := b.nbuf
-			if n > len(buf) {
-				n = len(buf)
-			}
+			n := min(b.nbuf, len(buf))
 			copy(buf, b.buf[:n])
 			copy(b.buf, b.buf[n:])
 			buf = buf[n:]
@@ -949,10 +1069,7 @@ func (b *boundReader) Read(buf []byte) (count int, rerr error) {
 			return count, err
 		}
 		if len(b.crlf) > 0 {
-			n := len(b.crlf)
-			if n > len(buf) {
-				n = len(buf)
-			}
+			n := min(len(b.crlf), len(buf))
 			copy(buf, b.crlf[:n])
 			count += n
 			buf = buf[n:]

@@ -65,6 +65,7 @@ import (
 	"github.com/mjl-/mox/dns"
 	"github.com/mjl-/mox/mlog"
 	"github.com/mjl-/mox/stub"
+	"slices"
 )
 
 var (
@@ -214,12 +215,9 @@ func Dial(ctx context.Context, elog *slog.Logger, resolver dns.Resolver, network
 	if allowedUsages != nil {
 		o := 0
 		for _, r := range records {
-			for _, usage := range allowedUsages {
-				if r.Usage == usage {
-					records[o] = r
-					o++
-					break
-				}
+			if slices.Contains(allowedUsages, r.Usage) {
+				records[o] = r
+				o++
 			}
 		}
 		records = records[:o]
@@ -263,7 +261,8 @@ func Dial(ctx context.Context, elog *slog.Logger, resolver dns.Resolver, network
 	config := TLSClientConfig(log.Logger, records, baseDom, moreAllowedHosts, &verifiedRecord, pkixRoots)
 	tlsConn := tls.Client(conn, &config)
 	if err := tlsConn.HandshakeContext(ctx); err != nil {
-		conn.Close()
+		xerr := conn.Close()
+		log.Check(xerr, "closing connection")
 		return nil, adns.TLSA{}, err
 	}
 	return tlsConn, verifiedRecord, nil
@@ -418,8 +417,8 @@ func verifySingle(log mlog.Log, tlsa adns.TLSA, cs tls.ConnectionState, allowedH
 			// sure to include the trusted anchor. ../rfc/7671:835
 			for _, chain := range chains {
 				// If pkix verified, check if any of the certificates match.
-				for i := len(chain) - 1; i >= 0; i-- {
-					if match(chain[i]) {
+				for _, c := range slices.Backward(chain) {
+					if match(c) {
 						return true, nil
 					}
 				}
@@ -448,7 +447,8 @@ func verifySingle(log mlog.Log, tlsa adns.TLSA, cs tls.ConnectionState, allowedH
 		// We set roots, so the system defaults don't get used. Verify checks the host name
 		// (set below) and checks for expiration.
 		opts := x509.VerifyOptions{
-			Roots: x509.NewCertPool(),
+			Intermediates: x509.NewCertPool(),
+			Roots:         x509.NewCertPool(),
 		}
 
 		// If the full certificate was included, we must add it to the valid roots, the TLS
@@ -465,11 +465,13 @@ func verifySingle(log mlog.Log, tlsa adns.TLSA, cs tls.ConnectionState, allowedH
 			}
 		}
 
-		for _, cert := range cs.PeerCertificates {
+		for i, cert := range cs.PeerCertificates {
 			if match(cert) {
 				opts.Roots.AddCert(cert)
 				found = true
 				break
+			} else if i > 0 {
+				opts.Intermediates.AddCert(cert)
 			}
 		}
 		if !found {

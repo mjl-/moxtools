@@ -109,10 +109,12 @@ type Client struct {
 	tlsVerifyPKIX         bool
 	ignoreTLSVerifyErrors bool
 	rootCAs               *x509.CertPool
-	remoteHostname        dns.Domain   // TLS with SNI and name verification.
-	daneRecords           []adns.TLSA  // For authenticating (START)TLS connection.
-	daneMoreHostnames     []dns.Domain // Additional allowed names in TLS certificate for DANE-TA.
-	daneVerifiedRecord    *adns.TLSA   // If non-nil, then will be set to verified DANE record if any.
+	remoteHostname        dns.Domain       // TLS with SNI and name verification.
+	daneRecords           []adns.TLSA      // For authenticating (START)TLS connection.
+	daneMoreHostnames     []dns.Domain     // Additional allowed names in TLS certificate for DANE-TA.
+	daneVerifiedRecord    *adns.TLSA       // If non-nil, then will be set to verified DANE record if any.
+	clientCert            *tls.Certificate // If non-nil, tls client authentication is done.
+	tlsConfigOpts         *tls.Config      // If non-nil, tls config to use.
 
 	// TLS connection success/failure are added. These are always non-nil, regardless
 	// of what was passed in opts. It lets us unconditionally dereference them.
@@ -226,11 +228,20 @@ type Opts struct {
 	// If not nil, used instead of the system default roots for TLS PKIX verification.
 	RootCAs *x509.CertPool
 
+	// If set, the TLS client certificate authentication is done.
+	ClientCert *tls.Certificate
+
 	// TLS verification successes/failures is added to these TLS reporting results.
 	// Once the STARTTLS handshake is attempted, a successful/failed connection is
 	// tracked.
 	RecipientDomainResult *tlsrpt.Result // MTA-STS or no policy.
 	HostResult            *tlsrpt.Result // DANE or no policy.
+
+	// If not nil, the TLS config to use instead of the default. Useful for custom
+	// certificate verification or TLS parameters. The other DANE/TLS/certificate
+	// fields in [Opts], and the tlsVerifyPKIX and remoteHostname parameters to [New]
+	// have no effect when TLSConfig is set.
+	TLSConfig *tls.Config
 }
 
 // New initializes an SMTP session on the given connection, returning a client that
@@ -281,10 +292,12 @@ func New(ctx context.Context, elog *slog.Logger, conn net.Conn, tlsMode TLSMode,
 		daneRecords:           opts.DANERecords,
 		daneMoreHostnames:     opts.DANEMoreHostnames,
 		daneVerifiedRecord:    opts.DANEVerifiedRecord,
+		clientCert:            opts.ClientCert,
 		lastlog:               time.Now(),
 		cmds:                  []string{"(none)"},
 		recipientDomainResult: ensureResult(opts.RecipientDomainResult),
 		hostResult:            ensureResult(opts.HostResult),
+		tlsConfigOpts:         opts.TLSConfig,
 	}
 	c.log = mlog.New("smtpclient", elog).WithFunc(func() []slog.Attr {
 		now := time.Now()
@@ -306,9 +319,9 @@ func New(ctx context.Context, elog *slog.Logger, conn net.Conn, tlsMode TLSMode,
 		c.firstReadAfterHandshake = true
 		c.tlsResultAdd(1, 0, nil)
 		c.conn = tlsconn
-		tlsversion, ciphersuite := moxio.TLSInfo(tlsconn)
+		version, ciphersuite := moxio.TLSInfo(tlsconn.ConnectionState())
 		c.log.Debug("tls client handshake done",
-			slog.String("tls", tlsversion),
+			slog.String("version", version),
 			slog.String("ciphersuite", ciphersuite),
 			slog.Any("servername", remoteHostname))
 		c.tls = true
@@ -348,6 +361,10 @@ func (c *Client) tlsConfig() *tls.Config {
 	// We always manage verification ourselves: We need to report in detail about
 	// failures. And we may have to verify both PKIX and DANE, record errors for
 	// each, and possibly ignore the errors.
+
+	if c.tlsConfigOpts != nil {
+		return c.tlsConfigOpts
+	}
 
 	verifyConnection := func(cs tls.ConnectionState) error {
 		// Collect verification errors. If there are none at the end, TLS validation
@@ -417,12 +434,18 @@ func (c *Client) tlsConfig() *tls.Config {
 		return nil
 	}
 
+	var certs []tls.Certificate
+	if c.clientCert != nil {
+		certs = []tls.Certificate{*c.clientCert}
+	}
+
 	return &tls.Config{
 		ServerName: c.remoteHostname.ASCII, // For SNI.
 		// todo: possibly accept older TLS versions for TLSOpportunistic? or would our private key be at risk?
 		MinVersion:         tls.VersionTLS12, // ../rfc/8996:31 ../rfc/8997:66
 		InsecureSkipVerify: true,             // VerifyConnection below is called and will do all verification.
 		VerifyConnection:   verifyConnection,
+		Certificates:       certs,
 	}
 }
 
@@ -817,13 +840,13 @@ func (c *Client) hello(ctx context.Context, tlsMode TLSMode, ehloHostname dns.Do
 		c.r = bufio.NewReader(c.tr)
 		c.w = bufio.NewWriter(c.tw)
 
-		tlsversion, ciphersuite := moxio.TLSInfo(nconn)
+		version, ciphersuite := moxio.TLSInfo(nconn.ConnectionState())
 		c.log.Debug("starttls client handshake done",
 			slog.Any("tlsmode", tlsMode),
 			slog.Bool("verifypkix", c.tlsVerifyPKIX),
 			slog.Bool("verifydane", c.daneRecords != nil),
 			slog.Bool("ignoretlsverifyerrors", c.ignoreTLSVerifyErrors),
-			slog.String("tls", tlsversion),
+			slog.String("version", version),
 			slog.String("ciphersuite", ciphersuite),
 			slog.Any("servername", c.remoteHostname),
 			slog.Any("danerecord", c.daneVerifiedRecord))
@@ -1084,8 +1107,8 @@ func (c *Client) TLSConnectionState() *tls.ConnectionState {
 // mailFrom must be an email address, or empty in case of a DSN. rcptTo must be
 // an email address.
 //
-// If the message contains bytes with the high bit set, req8bitmime must be true. If
-// set, the remote server must support the 8BITMIME extension or delivery will
+// If the message contains bytes with the high bit set, req8bitmime should be true.
+// If set, the remote server must support the 8BITMIME extension or delivery will
 // fail.
 //
 // If the message is internationalized, e.g. when headers contain non-ASCII
@@ -1138,10 +1161,7 @@ func (c *Client) DeliverMultiple(ctx context.Context, mailFrom string, rcptTo []
 	}
 
 	if !c.ext8bitmime && req8bitmime {
-		// Temporary error, e.g. OpenBSD spamd does not announce 8bitmime support, but once
-		// you get through, the mail server behind it probably does. Just needs a few
-		// retries.
-		c.xerrorf(false, 0, "", "", nil, "%w", Err8bitmimeUnsupported)
+		c.xerrorf(true, 0, "", "", nil, "%w", Err8bitmimeUnsupported)
 	}
 	if !c.extSMTPUTF8 && reqSMTPUTF8 {
 		// ../rfc/6531:313
@@ -1235,7 +1255,7 @@ func (c *Client) DeliverMultiple(ctx context.Context, mailFrom string, rcptTo []
 		// Read responses to RCPT TO.
 		rcptResps = make([]Response, len(rcptTo))
 		nok := 0
-		for i := 0; i < len(rcptTo); i++ {
+		for i := range rcptTo {
 			code, secode, firstLine, moreLines, err := c.read()
 			// 552 should be treated as temporary historically, ../rfc/5321:3576
 			permanent := code/100 == 5 && code != smtp.C552MailboxFull
@@ -1445,9 +1465,10 @@ func (c *Client) Close() (rerr error) {
 	return
 }
 
-// Conn returns the connection with initialized SMTP session. Once the caller uses
-// this connection it is in control, and responsible for closing the connection,
-// and other functions on the client must not be called anymore.
+// Conn returns the connection with the initialized SMTP session, possibly wrapping
+// a TLS connection, and handling protocol trace logging. Once the caller uses this
+// connection it is in control, and responsible for closing the connection, and
+// other functions on the client must not be called anymore.
 func (c *Client) Conn() (net.Conn, error) {
 	if err := c.conn.SetDeadline(time.Time{}); err != nil {
 		return nil, fmt.Errorf("clearing io deadlines: %w", err)

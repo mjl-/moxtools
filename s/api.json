@@ -1130,6 +1130,13 @@
 					]
 				},
 				{
+					"Name": "Preference",
+					"Docs": "-1 if not from MX record.",
+					"Typewords": [
+						"int32"
+					]
+				},
+				{
 					"Name": "MTASTSError",
 					"Docs": "",
 					"Typewords": [
@@ -1286,6 +1293,7 @@
 					"Name": "VerifiedRecord",
 					"Docs": "",
 					"Typewords": [
+						"nullable",
 						"TLSARecord"
 					]
 				}

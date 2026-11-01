@@ -39,6 +39,7 @@ import (
 	"github.com/mjl-/mox/smtpclient"
 	"github.com/mjl-/mox/spf"
 	"github.com/mjl-/mox/tlsrpt"
+	"slices"
 )
 
 var listen string
@@ -491,7 +492,7 @@ type DomainDANE struct {
 	Records        []TLSARecord
 	TLSABaseDomain dns.Domain
 	Error          string
-	VerifiedRecord TLSARecord
+	VerifiedRecord *TLSARecord
 }
 
 type Proto struct {
@@ -591,6 +592,7 @@ type DomainDial struct {
 type DomainMXHost struct {
 	DurationMS  int
 	Host        dns.IPDomain
+	Preference  int // -1 if not from MX record.
 	MTASTSError string
 	IP          DomainIP
 	DANE        DomainDANE
@@ -629,7 +631,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 	log.Debug("domaincheck call", slog.String("domain", domain))
 
 	dom, err := dns.ParseDomain(domain)
-	xcheck(err, "parsing domain")
+	xcheckuser(err, "parsing domain")
 
 	start := time.Now()
 
@@ -720,7 +722,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 				for i, r := range daneRecords {
 					tlsarecords[i] = TLSARecord{r}
 				}
-				mx.DANE = DomainDANE{timeSince(t0dane), daneRequired, tlsarecords, tlsaBaseDomain, errmsg(err), TLSARecord{}}
+				mx.DANE = DomainDANE{timeSince(t0dane), daneRequired, tlsarecords, tlsaBaseDomain, errmsg(err), nil}
 			}
 
 			if !dial {
@@ -764,7 +766,11 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 			client.Close()
 			mx.SMTP.DurationMS = timeSince(t0smtp)
 
-			mx.DANE.VerifiedRecord = TLSARecord{daneVerifiedRecord}
+			if daneVerifiedRecord.CertAssoc != nil {
+				mx.DANE.VerifiedRecord = &TLSARecord{daneVerifiedRecord}
+			} else if mx.DANE.Required && mx.DANE.Error == "" {
+				mx.DANE.Error = "no matching TLSA record"
+			}
 
 			mx.SMTP.Supports8bitMIME = client.Supports8BITMIME()
 			mx.SMTP.SupportsRequireTLS = client.SupportsRequireTLS()
@@ -772,7 +778,7 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 			mx.SMTP.SupportsSTARTTLS = client.SupportsStartTLS()
 			if cs != nil {
 				mx.SMTP.TLSConnectionState = &TLSConnectionState{
-					Version:            tlsVersionName(cs.Version),
+					Version:            tls.VersionName(cs.Version),
 					CipherSuite:        tls.CipherSuiteName(cs.CipherSuite),
 					NegotiatedProtocol: cs.NegotiatedProtocol,
 					ServerName:         cs.ServerName,
@@ -811,21 +817,22 @@ func (API) DomainCheck(ctx context.Context, domain string) (dr DomainResult) {
 
 		t0 := time.Now()
 
-		var hosts []dns.IPDomain
+		var hostPrefs []smtpclient.HostPref
 		var err error
-		dr.MX.Have, dr.MX.OrigNextHopAuthentic, dr.MX.ExpandedNextHopAuthentic, dr.MX.ExpandedNextHop, hosts, dr.MX.Permanent, err = smtpclient.GatherDestinations(opctx, log.Logger, resolver, dns.IPDomain{Domain: dom})
+		dr.MX.Have, dr.MX.OrigNextHopAuthentic, dr.MX.ExpandedNextHopAuthentic, dr.MX.ExpandedNextHop, hostPrefs, dr.MX.Permanent, err = smtpclient.GatherDestinations(opctx, log.Logger, resolver, dns.IPDomain{Domain: dom})
 		dr.MX.Error = errmsg(err)
 		dr.MX.DurationMS = timeSince(t0)
 
 		mtastswg.Wait()
 
-		dr.MXHosts = make([]DomainMXHost, len(hosts))
-		for i, h := range hosts {
-			dr.MXHosts[i].Host = h
+		dr.MXHosts = make([]DomainMXHost, len(hostPrefs))
+		for i, hp := range hostPrefs {
+			dr.MXHosts[i].Host = hp.Host
+			dr.MXHosts[i].Preference = hp.Pref
 			var pkix bool
 			if dr.MTASTS.Policy != nil && dr.MTASTS.Policy.Mode != mtasts.ModeNone {
 				pkix = true
-				if !dr.MTASTS.Policy.Matches(h.Domain) {
+				if !dr.MTASTS.Policy.Matches(hp.Host.Domain) {
 					dr.MXHosts[i].MTASTSError = "MX target does not match MTA-STS policy"
 				}
 			}
@@ -858,7 +865,7 @@ func (h *traceHandler) Handle(ctx context.Context, r slog.Record) error {
 
 func (h *traceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	// We keep the same traceHandler instance so we can get the trace after logging.
-	h.Attrs = append([]slog.Attr{}, append(h.Attrs, attrs...)...)
+	h.Attrs = slices.Clone(append(h.Attrs, attrs...))
 	return h
 }
 
@@ -884,21 +891,4 @@ func (d *limitDialer) DialContext(ctx context.Context, network, addr string) (c 
 	}
 	nd := &net.Dialer{}
 	return nd.DialContext(ctx, network, addr)
-}
-
-var tlsVersions = map[uint16]string{
-	tls.VersionSSL30: "SSLv3",
-	tls.VersionTLS10: "TLS 1.0",
-	tls.VersionTLS11: "TLS 1.1",
-	tls.VersionTLS12: "TLS 1.2",
-	tls.VersionTLS13: "TLS 1.3",
-}
-
-// tls.VersionName was introduced in go1.21
-func tlsVersionName(version uint16) string {
-	s, ok := tlsVersions[version]
-	if !ok {
-		return fmt.Sprintf("%04x", version)
-	}
-	return s
 }
